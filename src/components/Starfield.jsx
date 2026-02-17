@@ -48,7 +48,7 @@ export default function Starfield() {
   });
 
   return (
-    <points ref={pointsRef}>
+    <points ref={pointsRef} frustumCulled={false} renderOrder={-2}>
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"

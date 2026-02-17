@@ -11,10 +11,10 @@ import useStore from '../store/useStore';
 function Background() {
   const texture = useLoader(THREE.TextureLoader, '/textures/stars.jpg');
   return (
-    <mesh position={[0, 0, 0]}>
+    <mesh position={[0, 0, 0]} frustumCulled={false} renderOrder={-1}>
       <sphereGeometry args={[900000, 64, 64]} />
-      <meshBasicMaterial 
-        map={texture} 
+      <meshBasicMaterial
+        map={texture}
         side={THREE.BackSide}
         transparent
         opacity={0.6}
@@ -63,11 +63,11 @@ export default function Scene() {
 
   return (
     <Canvas
-      camera={{ position: [0, 200, 500], fov: 60, near: 0.1, far: 2000000 }}
+      camera={{ position: [0, 200, 400], fov: 45, near: 0.1, far: 2000000 }}
       gl={{
-        logarithmicDepthBuffer: true, // Fix Z-fighting for inner planets
+        logarithmicDepthBuffer: true,
         antialias: true,
-        toneMapping: 3, // ACESFilmicToneMapping
+        toneMapping: 3,
         toneMappingExposure: 1.0,
       }}
       style={{ position: 'fixed', inset: 0 }}
