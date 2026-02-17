@@ -5,6 +5,25 @@
 // Rates are per century.
 // Physical data: axial tilt (deg), rotation period (Earth hours)
 
+// Sun data for "About Me" modal
+export const SUN_DATA = {
+  name: 'Sun',
+  label: 'About Me',
+  description: 'Full-stack developer passionate about creating immersive web experiences.',
+  color: '#ffaa00',
+  emissive: '#ff6600',
+  atmosphereColor: '#ffcc44',
+  radius: 695700, // Real sun radius in km
+  visualRadius: 109, // Visual radius in scene units (109x Earth)
+  axialTilt: 7.25,
+  siderealDay: 609.12, // ~25 Earth days at equator
+  details: {
+    tech: ['React', 'Three.js', 'Node.js', 'TypeScript', 'Python', 'WebGL'],
+    description:
+      'Experienced full-stack developer specializing in 3D web experiences, real-time applications, and creative coding. Passionate about astronomy, physics simulations, and pushing the boundaries of what\'s possible on the web.',
+  },
+};
+
 const planetData = {
   mercury: {
     name: 'Mercury',

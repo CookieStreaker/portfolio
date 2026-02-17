@@ -3,17 +3,22 @@ import { useFrame, useThree } from '@react-three/fiber';
 import { OrbitControls } from '@react-three/drei';
 import * as THREE from 'three';
 import useStore from '../store/useStore';
+import { getPlanetVisualRadius } from '../utils/orbitalMechanics';
+import { SUN_DATA } from '../data/planetData';
 
 export default function CameraControls() {
   const { camera, scene, gl } = useThree();
   const controlsRef = useRef();
-  const { currentView, cameraTarget, selectedPlanet, focusedPlanet, setFocusedPlanet } = useStore();
+  const { currentView, cameraTarget, focusState, targetPlanet, resetToSystemView } = useStore();
 
-  const targetPosition = useRef(new THREE.Vector3(0, 20, 50));
+  const targetPosition = useRef(new THREE.Vector3(0, 200, 500));
   const targetLookAt = useRef(new THREE.Vector3(0, 0, 0));
   const currentLookAt = useRef(new THREE.Vector3(0, 0, 0));
   const isAnimating = useRef(false);
   const focusedPlanetPos = useRef(new THREE.Vector3(0, 0, 0));
+  const dynamicMinDistance = useRef(150); // Safety: Sun radius is 109
+  const dynamicMaxDistance = useRef(1000000);
+  const hasAnimatedToFocus = useRef(false);
 
   // Handle click on empty space (background) to reset focus
   useEffect(() => {
@@ -35,26 +40,43 @@ export default function CameraControls() {
         return i.object.type === 'Mesh' && i.object.geometry.type === 'SphereGeometry';
       });
       
-      // If no planet clicked, reset focus to sun
+      // If no planet clicked, reset to system view
       if (planetIntersects.length === 0) {
-        setFocusedPlanet(null);
+        resetToSystemView();
       }
     };
 
     gl.domElement.addEventListener('click', handleClick);
     return () => gl.domElement.removeEventListener('click', handleClick);
-  }, [currentView, camera, scene, gl.domElement, setFocusedPlanet]);
+  }, [currentView, camera, scene, gl.domElement, resetToSystemView]);
 
   useEffect(() => {
     if (currentView === 'solarsystem') {
       isAnimating.current = true;
+      hasAnimatedToFocus.current = false; // Reset animation flag
       
-      if (focusedPlanet) {
-        // Camera will be updated in useFrame to follow planet
+      if (focusState === 'focused' && targetPlanet) {
+        // Calculate dynamic zoom distance based on planet size
+        let objectRadius;
+        if (targetPlanet === 'sun') {
+          objectRadius = SUN_DATA.visualRadius;
+        } else {
+          objectRadius = getPlanetVisualRadius(targetPlanet);
+        }
+        
+        // Set dynamic min/max distances based on object size
+        dynamicMinDistance.current = objectRadius * 1.5;
+        dynamicMaxDistance.current = objectRadius * 20; // Allow more zoom out
+        
+        // Camera will be updated in useFrame to follow planet/sun
       } else {
         // Reset to solar system view
-        targetPosition.current.set(0, 20, 50);
+        targetPosition.current.set(0, 200, 500);
         targetLookAt.current.set(0, 0, 0);
+        
+        // Reset to default zoom limits (prevent camera entering Sun)
+        dynamicMinDistance.current = 150; // Sun radius is 109, add safety margin
+        dynamicMaxDistance.current = 1000000; // Allow zooming WAY out
       }
       
       setTimeout(() => {
@@ -72,7 +94,7 @@ export default function CameraControls() {
       );
       targetLookAt.current.set(x, y, z);
     }
-  }, [currentView, cameraTarget, focusedPlanet]);
+  }, [currentView, cameraTarget, focusState, targetPlanet]);
 
   useFrame((state, delta) => {
     // Don't interfere during Big Bang or loading
@@ -100,31 +122,55 @@ export default function CameraControls() {
     // Solar system view with OrbitControls
     if (currentView === 'solarsystem') {
       if (controlsRef.current) {
-        // Handle focused planet camera
-        if (focusedPlanet) {
-          // Find the focused planet's current position
-          const planetGroup = scene.getObjectByName(`planet-${focusedPlanet}`);
-          if (planetGroup) {
-            focusedPlanetPos.current.copy(planetGroup.position);
-            
-            // Set OrbitControls target to planet
+        // Handle focused planet/sun camera
+        if (focusState === 'focused' && targetPlanet) {
+          let targetObject = null;
+          let objectRadius = 1;
+          
+          // Handle Sun or Planet
+          if (targetPlanet === 'sun') {
+            // Sun is at origin
+            focusedPlanetPos.current.set(0, 0, 0);
+            objectRadius = 109; // Updated Sun radius
+            targetObject = scene.getObjectByName('sun-group');
+          } else {
+            // Find the focused planet's current position
+            const planetGroup = scene.getObjectByName(`planet-${targetPlanet}`);
+            if (planetGroup) {
+              focusedPlanetPos.current.copy(planetGroup.position);
+              objectRadius = getPlanetVisualRadius(targetPlanet);
+              targetObject = planetGroup;
+            }
+          }
+          
+          if (targetObject || targetPlanet === 'sun') {
+            // ALWAYS update OrbitControls target to follow the moving object
             controlsRef.current.target.copy(focusedPlanetPos.current);
             
-            // Calculate camera offset (orbit around planet)
-            const distance = 8; // Distance from planet
-            const currentCamDir = new THREE.Vector3()
-              .subVectors(camera.position, focusedPlanetPos.current)
-              .normalize();
-            
-            // If camera is too far or too close, animate to proper distance
-            const currentDist = camera.position.distanceTo(focusedPlanetPos.current);
-            if (Math.abs(currentDist - distance) > 0.5) {
-              targetPosition.current.copy(focusedPlanetPos.current).add(
-                currentCamDir.multiplyScalar(distance)
-              );
-              const lerpFactor = 1 - Math.pow(0.1, delta);
-              camera.position.lerp(targetPosition.current, lerpFactor);
+            // Only animate camera position ONCE on initial focus
+            if (!hasAnimatedToFocus.current) {
+              // Calculate ideal viewing distance (4x the radius)
+              const idealDistance = objectRadius * 4.0;
+              
+              // Calculate camera offset (orbit around object)
+              const currentCamDir = new THREE.Vector3()
+                .subVectors(camera.position, focusedPlanetPos.current)
+                .normalize();
+              
+              // Animate to ideal distance
+              const currentDist = camera.position.distanceTo(focusedPlanetPos.current);
+              if (Math.abs(currentDist - idealDistance) > objectRadius * 0.1) {
+                targetPosition.current.copy(focusedPlanetPos.current).add(
+                  currentCamDir.multiplyScalar(idealDistance)
+                );
+                const lerpFactor = 1 - Math.pow(0.1, delta);
+                camera.position.lerp(targetPosition.current, lerpFactor);
+              } else {
+                // Animation complete
+                hasAnimatedToFocus.current = true;
+              }
             }
+            // After initial animation, OrbitControls handles camera position
           }
           
           controlsRef.current.enabled = true;
@@ -156,12 +202,11 @@ export default function CameraControls() {
       ref={controlsRef}
       enableDamping={true}
       dampingFactor={0.05}
-      minDistance={3}
-      maxDistance={200}
+      minDistance={dynamicMinDistance.current}
+      maxDistance={dynamicMaxDistance.current}
       maxPolarAngle={Math.PI * 0.9}
       minPolarAngle={Math.PI * 0.1}
-      enablePan={true}
-      panSpeed={0.5}
+      enablePan={false}
       rotateSpeed={0.5}
       zoomSpeed={0.8}
     />

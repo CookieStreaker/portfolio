@@ -2,7 +2,7 @@ import React, { useRef, useMemo } from 'react';
 import { useFrame } from '@react-three/fiber';
 import * as THREE from 'three';
 
-const STAR_COUNT = 8000;
+const STAR_COUNT = 15000;
 
 export default function Starfield() {
   const pointsRef = useRef();
@@ -14,8 +14,8 @@ export default function Starfield() {
 
     for (let i = 0; i < STAR_COUNT; i++) {
       const i3 = i * 3;
-      // Distribute on a large sphere
-      const radius = 150 + Math.random() * 150;
+      // Distribute on a sphere in deep space (beyond the texture sphere)
+      const radius = 1000000 + Math.random() * 500000; // Min 1M, Max 1.5M
       const theta = Math.random() * Math.PI * 2;
       const phi = Math.acos(2 * Math.random() - 1);
 

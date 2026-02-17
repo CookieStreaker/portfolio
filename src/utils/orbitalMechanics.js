@@ -1,158 +1,170 @@
 /**
- * Kepler's Equation solver and orbital mechanics for accurate 3D planetary positions.
- * Based on JPL's Keplerian elements approximation for the planets.
- * Reference: https://ssd.jpl.nasa.gov/planets/approx_pos.html
+ * NASA-Grade Orbital Mechanics using astronomy-engine library.
+ * Provides real-time, physically accurate planetary positions.
  */
 
-const DEG2RAD = Math.PI / 180;
-const AU_TO_SCENE = 8; // Scale factor: 1 AU = 8 scene units
+// ✅ ALSO CORRECT (Named imports)
+import * as Astronomy from 'astronomy-engine';
+
+// Then in your code, you access things like:
+// const position = Astronomy.HelioVector(Astronomy.Body.Earth, date);
+
+// Scale factors
+const KM_TO_SCENE_UNIT = 1 / 1000000; // 1 Three.js unit = 1,000,000 km
+const AU_TO_KM = 149597870.7; // 1 AU in kilometers
+const VISUAL_SCALE_MULTIPLIER = 2000; // Make planets visible (2000x larger than real)
+
+// Planet physical radii in km (real values)
+const PLANET_RADII_KM = {
+  mercury: 2439.7,
+  venus: 6051.8,
+  earth: 6371.0,
+  mars: 3389.5,
+  jupiter: 69911,
+  saturn: 58232,
+  uranus: 25362,
+  neptune: 24622,
+};
+
+// Map planet keys to Astronomy.Body enum
+const BODY_MAP = {
+  mercury: Astronomy.Body.Mercury,
+  venus: Astronomy.Body.Venus,
+  earth: Astronomy.Body.Earth,
+  mars: Astronomy.Body.Mars,
+  jupiter: Astronomy.Body.Jupiter,
+  saturn: Astronomy.Body.Saturn,
+  uranus: Astronomy.Body.Uranus,
+  neptune: Astronomy.Body.Neptune,
+};
 
 /**
- * Solve Kepler's Equation: M = E - e*sin(E)
- * Uses Newton-Raphson iteration to find Eccentric Anomaly (E)
+ * Get heliocentric position of a planet using astronomy-engine
+ * @param {string} planetKey - Planet identifier
+ * @param {Date} date - Date for position calculation
+ * @returns {Object} { position: [x,y,z], velocity: [vx,vy,vz] }
  */
-function solveKepler(M, e, tol = 1e-10, maxIter = 100) {
-  let E = M; // Initial guess
-  for (let i = 0; i < maxIter; i++) {
-    const dE = (E - e * Math.sin(E) - M) / (1 - e * Math.cos(E));
-    E -= dE;
-    if (Math.abs(dE) < tol) break;
+export function getPlanetPosition(planetKey, date) {
+  const body = BODY_MAP[planetKey];
+  if (!body) {
+    console.error(`Unknown planet: ${planetKey}`);
+    return { position: [0, 0, 0], velocity: [0, 0, 0] };
   }
-  return E;
+
+  // Get heliocentric ecliptic coordinates
+  const position = Astronomy.HelioVector(body, date);
+  
+  // Convert from AU to scene units (via km)
+  // astronomy-engine returns AU, convert to km then to scene units
+  const x = position.x * AU_TO_KM * KM_TO_SCENE_UNIT;
+  const y = position.z * AU_TO_KM * KM_TO_SCENE_UNIT; // Z-up in astronomy, Y-up in Three.js
+  const z = -position.y * AU_TO_KM * KM_TO_SCENE_UNIT; // Swap Y/Z
+
+  return {
+    position: [x, y, z],
+    velocity: [0, 0, 0], // Can calculate if needed
+  };
 }
 
 /**
- * Compute a planet's heliocentric position in 3D ecliptic coordinates.
- * @param {Object} orbitalElements - Keplerian orbital elements
- * @param {Date} date - Date for which to compute position
- * @param {number} timeScale - Time multiplier for animation (1.0 = real-time)
- * @returns {Array} [x, y, z] in scene units
+ * Get all planet positions at once
+ * @param {Date} date - Date for calculations
+ * @returns {Object} Map of planet keys to positions
  */
-export function getPlanetPosition(orbitalElements, date = new Date(), timeScale = 1.0) {
-  // Centuries since J2000.0 epoch (2000-01-01 12:00 TT)
-  const J2000 = Date.UTC(2000, 0, 1, 12, 0, 0);
-  const T = ((date.getTime() - J2000) * timeScale) / (36525 * 86400000);
-
-  const { a, aRate, e, eRate, i, iRate, L, LRate, longPeri, longPeriRate, longNode, longNodeRate } =
-    orbitalElements;
-
-  // Compute current orbital elements at epoch T
-  const aC = a + aRate * T; // Semi-major axis (AU)
-  const eC = e + eRate * T; // Eccentricity
-  const iC = (i + iRate * T) * DEG2RAD; // Inclination
-  const LC = (L + LRate * T) * DEG2RAD; // Mean longitude
-  const wBar = (longPeri + longPeriRate * T) * DEG2RAD; // Longitude of perihelion
-  const Omega = (longNode + longNodeRate * T) * DEG2RAD; // Longitude of ascending node
-
-  // Argument of perihelion
-  const w = wBar - Omega;
-
-  // Mean anomaly
-  let M = LC - wBar;
-  // Normalize to [-π, π]
-  M = ((M % (2 * Math.PI)) + 3 * Math.PI) % (2 * Math.PI) - Math.PI;
-
-  // Solve Kepler's equation for Eccentric Anomaly
-  const E = solveKepler(M, eC);
-
-  // True anomaly (angle from perihelion to planet)
-  const nu = 2 * Math.atan2(
-    Math.sqrt(1 + eC) * Math.sin(E / 2),
-    Math.sqrt(1 - eC) * Math.cos(E / 2)
-  );
-
-  // Distance from sun (radius)
-  const r = aC * (1 - eC * Math.cos(E));
-
-  // Position in orbital plane
-  const xOrb = r * Math.cos(nu);
-  const yOrb = r * Math.sin(nu);
-  const zOrb = 0;
-
-  // Rotation matrices to convert to ecliptic coordinates
-  // 1. Rotate by argument of perihelion (w)
-  const cosW = Math.cos(w);
-  const sinW = Math.sin(w);
-  const x1 = cosW * xOrb - sinW * yOrb;
-  const y1 = sinW * xOrb + cosW * yOrb;
-  const z1 = zOrb;
-
-  // 2. Rotate by inclination (i)
-  const cosI = Math.cos(iC);
-  const sinI = Math.sin(iC);
-  const x2 = x1;
-  const y2 = cosI * y1 - sinI * z1;
-  const z2 = sinI * y1 + cosI * z1;
-
-  // 3. Rotate by longitude of ascending node (Omega)
-  const cosO = Math.cos(Omega);
-  const sinO = Math.sin(Omega);
-  const x = cosO * x2 - sinO * y2;
-  const y = sinO * x2 + cosO * y2;
-  const z = z2;
-
-  // Convert from AU to scene units
-  return [x * AU_TO_SCENE, y * AU_TO_SCENE, z * AU_TO_SCENE];
+export function getAllPlanetPositions(date) {
+  const positions = {};
+  Object.keys(BODY_MAP).forEach((planetKey) => {
+    positions[planetKey] = getPlanetPosition(planetKey, date);
+  });
+  return positions;
 }
 
 /**
- * Generate elliptical orbit path points for visualization
- * @param {Object} orbitalElements - Keplerian orbital elements
- * @param {number} segments - Number of points on the orbit
- * @returns {Array} Array of [x, y, z] positions
+ * Get planet visual radius in scene units (with visibility multiplier)
+ * @param {string} planetKey - Planet identifier
+ * @returns {number} Visual radius
  */
-export function getOrbitPath(orbitalElements, segments = 256) {
+export function getPlanetVisualRadius(planetKey) {
+  const realRadiusKm = PLANET_RADII_KM[planetKey] || 6371;
+  return (realRadiusKm * KM_TO_SCENE_UNIT * VISUAL_SCALE_MULTIPLIER);
+}
+
+/**
+ * Get planet real radius in scene units (for collision/distance calculations)
+ * @param {string} planetKey - Planet identifier
+ * @returns {number} Real radius
+ */
+export function getPlanetRealRadius(planetKey) {
+  const realRadiusKm = PLANET_RADII_KM[planetKey] || 6371;
+  return (realRadiusKm * KM_TO_SCENE_UNIT);
+}
+
+/**
+ * Generate orbit path points for visualization
+ * @param {string} planetKey - Planet identifier
+ * @param {Date} startDate - Starting date
+ * @param {number} segments - Number of points
+ * @returns {Array} Array of [x,y,z] positions
+ */
+export function getOrbitPath(planetKey, startDate, segments = 360) {
+  const body = BODY_MAP[planetKey];
+  if (!body) return [];
+
+  // Get orbital period in days
+  const periods = {
+    mercury: 87.97,
+    venus: 224.7,
+    earth: 365.25,
+    mars: 686.98,
+    jupiter: 4332.59,
+    saturn: 10759.22,
+    uranus: 30688.5,
+    neptune: 60182,
+  };
+
+  const periodDays = periods[planetKey] || 365.25;
   const points = [];
-  const { a, e, i, longPeri, longNode } = orbitalElements;
 
-  const iRad = i * DEG2RAD;
-  const wBar = longPeri * DEG2RAD;
-  const Omega = longNode * DEG2RAD;
-  const w = wBar - Omega;
-
-  for (let j = 0; j <= segments; j++) {
-    const nu = (j / segments) * 2 * Math.PI; // True anomaly
-    const r = a * (1 - e * e) / (1 + e * Math.cos(nu)); // Radius
-
-    // Position in orbital plane
-    const xOrb = r * Math.cos(nu);
-    const yOrb = r * Math.sin(nu);
-
-    // Apply 3D rotation transformations
-    const cosW = Math.cos(w);
-    const sinW = Math.sin(w);
-    const x1 = cosW * xOrb - sinW * yOrb;
-    const y1 = sinW * xOrb + cosW * yOrb;
-
-    const cosI = Math.cos(iRad);
-    const sinI = Math.sin(iRad);
-    const x2 = x1;
-    const y2 = cosI * y1;
-    const z2 = sinI * y1;
-
-    const cosO = Math.cos(Omega);
-    const sinO = Math.sin(Omega);
-    const x = cosO * x2 - sinO * y2;
-    const y = sinO * x2 + cosO * y2;
-    const z = z2;
-
-    points.push([x * AU_TO_SCENE, y * AU_TO_SCENE, z * AU_TO_SCENE]);
+  for (let i = 0; i <= segments; i++) {
+    const fraction = i / segments;
+    const daysOffset = fraction * periodDays;
+    const date = new Date(startDate.getTime() + daysOffset * 86400000);
+    
+    const position = Astronomy.HelioVector(body, date);
+    const x = position.x * AU_TO_KM * KM_TO_SCENE_UNIT;
+    const y = position.z * AU_TO_KM * KM_TO_SCENE_UNIT;
+    const z = -position.y * AU_TO_KM * KM_TO_SCENE_UNIT;
+    
+    points.push([x, y, z]);
   }
 
   return points;
 }
 
 /**
- * Calculate rotation angle based on sidereal day and time scale
+ * Calculate rotation angle based on sidereal day and elapsed time
  * @param {number} siderealDayHours - Length of one sidereal day in Earth hours
- * @param {number} deltaTime - Time elapsed in seconds
+ * @param {number} elapsedSeconds - Time elapsed since start
  * @param {number} timeScale - Time multiplier
  * @returns {number} Rotation angle in radians
  */
-export function getRotationDelta(siderealDayHours, deltaTime, timeScale = 1.0) {
-  // Convert sidereal day to seconds
+export function getRotationAngle(siderealDayHours, elapsedSeconds, timeScale = 1.0) {
   const siderealDaySeconds = siderealDayHours * 3600;
-  // Radians per second
-  const radiansPerSecond = (2 * Math.PI) / siderealDaySeconds;
-  return radiansPerSecond * deltaTime * timeScale;
+  const effectiveSeconds = elapsedSeconds * timeScale;
+  const rotations = effectiveSeconds / siderealDaySeconds;
+  return (rotations * 2 * Math.PI) % (2 * Math.PI);
+}
+
+/**
+ * Get Sun position (always at origin)
+ */
+export function getSunPosition() {
+  return [0, 0, 0];
+}
+
+/**
+ * Convert scene position to AU for display
+ */
+export function sceneToAU(sceneUnits) {
+  return (sceneUnits / KM_TO_SCENE_UNIT) / AU_TO_KM;
 }
